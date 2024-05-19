@@ -1,0 +1,5 @@
+gradio==4.31.2
+numpy==1.26.4
+Pillow==10.3.0
+segment_anything.egg==info
+torch==2.3.0

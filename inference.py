@@ -1,18 +1,20 @@
-from PIL import Image, ImageDraw
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
-import gc
-import os
-import numpy as np
-import torch 
-import cv2
-import gradio as gr
+from PIL import Image, ImageDraw  # Import PIL for image handling and drawing
+from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor  # Import SAM models
+import gc  # Import garbage collector for memory management
+import os  # Import OS module for file and directory operations
+import numpy as np  # Import NumPy for numerical operations
+import torch  # Import PyTorch for machine learning tasks
+import cv2  # Import OpenCV for image processing
+import gradio as gr  # Import Gradio for building the web interface
 
+# Dictionary of available models and their checkpoint paths
 models = {
     'vit_b': './checkpoints/vit_b.pth',
     'vit_l': './checkpoints/vit_l.pth',
     'vit_h': './checkpoints/vit_h.pth'
 }
 
+# Dictionary mapping tooth classes to their respective colors
 color_dict = {
     'L_lateral-incisor': (255, 0, 0),
     'L_canine': (0, 255, 0),
@@ -24,6 +26,7 @@ color_dict = {
     'R_second-premolar': (0, 165, 255)
 }
 
+# Example images for the interface
 image_examples = [
     [os.path.join(os.path.dirname(__file__), "./images/1.jpg"), 0, []],
     [os.path.join(os.path.dirname(__file__), "./images/2.jpg"), 1, []],
@@ -33,35 +36,39 @@ image_examples = [
     [os.path.join(os.path.dirname(__file__), "./images/6.jpg"), 5, []]
 ]
 
+# Function to draw bounding boxes on an image
 def plot_boxes(img, boxes):
-    img_pil = Image.fromarray(np.uint8(img * 255)).convert('RGB')
-    draw = ImageDraw.Draw(img_pil)
-    for box in boxes:
-        color = tuple(np.random.randint(0, 255, size=3)).tolist()
+    img_pil = Image.fromarray(np.uint8(img * 255)).convert('RGB')  # Convert NumPy array to PIL Image
+    draw = ImageDraw.Draw(img_pil)  # Create a drawing context
+    for box in boxes:  # Draw each bounding box
+        color = tuple(np.random.randint(0, 255, size=3)).tolist()  # Random color for each box
         x0, y0, x1, y1 = box
-        x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
-        draw.rectangle([x0, y0, x1, y1], outline=color, width=6)
-    return img_pil
+        x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)  # Convert coordinates to integers
+        draw.rectangle([x0, y0, x1, y1], outline=color, width=6)  # Draw the rectangle
+    return img_pil  # Return the image with drawn boxes
 
+# Function to segment an image and generate masks
 def segment_one(img, mask_generator, seed=None):
     if seed is not None:
-        np.random.seed(seed)
-    masks = mask_generator.generate(img)
-    sorted_anns = sorted(masks, key=(lambda x: x['area']), reverse=True)
-    mask_all = np.ones((img.shape[0], img.shape[1], 3))
-    for ann in sorted_anns:
+        np.random.seed(seed)  # Set seed for reproducibility
+    masks = mask_generator.generate(img)  # Generate masks using the mask generator
+    sorted_anns = sorted(masks, key=(lambda x: x['area']), reverse=True)  # Sort masks by area
+    mask_all = np.ones((img.shape[0], img.shape[1], 3))  # Create an array to hold all masks
+    for ann in sorted_anns:  # Apply each mask to the array
         m = ann['segmentation']
-        color_mask = np.random.random((1, 3)).tolist()[0]
+        color_mask = np.random.random((1, 3)).tolist()[0]  # Random color for each mask
         for i in range(3):
             mask_all[m == True, i] = color_mask[i]
-    result = img / 255 * 0.3 + mask_all * 0.7
-    return result, mask_all
+    result = img / 255 * 0.3 + mask_all * 0.7  # Blend the original image with the masks
+    return result, mask_all  # Return the result and the mask array
 
+# Function to run inference using the generator
 def generator_inference(device, model_type, points_per_side, pred_iou_thresh, stability_score_thresh,
                         min_mask_region_area, stability_score_offset, box_nms_thresh, crop_n_layers, crop_nms_thresh,
                         input_x, progress=gr.Progress()):
-    # SAM model
+    # Load the SAM model
     sam = sam_model_registry[model_type](checkpoint=models[model_type]).to(device)
+    # Initialize the mask generator
     mask_generator = SamAutomaticMaskGenerator(
         sam,
         points_per_side=points_per_side,
@@ -78,12 +85,12 @@ def generator_inference(device, model_type, points_per_side, pred_iou_thresh, st
         output_mode='binary_mask'
     )
 
-    # Input is image, type: numpy
+    # If input is an image (NumPy array)
     if type(input_x) == np.ndarray:
-        result, mask_all = segment_one(input_x, mask_generator)
+        result, mask_all = segment_one(input_x, mask_generator)  # Segment the image
         return result, mask_all
-    elif isinstance(input_x, str):  # Input is video, type: path (str)
-        cap = cv2.VideoCapture(input_x)  # Read video
+    elif isinstance(input_x, str):  # If input is a video (path string)
+        cap = cv2.VideoCapture(input_x)  # Read the video
         frames_num = cap.get(cv2.CAP_PROP_FRAME_COUNT)
         W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
@@ -91,25 +98,25 @@ def generator_inference(device, model_type, points_per_side, pred_iou_thresh, st
         while True:
             ret, frame = cap.read()  # Read a frame
             if ret:
-                result, mask_all = segment_one(frame, mask_generator, seed=2023)
-                result = (result * 255).astype(np.uint8)
-                out.write(result)
+                result, mask_all = segment_one(frame, mask_generator, seed=2023)  # Segment the frame
+                result = (result * 255).astype(np.uint8)  # Convert to uint8
+                out.write(result)  # Write the frame to the output video
             else:
                 break
         out.release()
         cap.release()
-        return 'output.mp4'
+        return 'output.mp4'  # Return the path to the output video
 
+# Function to run inference using the predictor
 def predictor_inference(device, model_type, input_x, input_text, selected_points, owl_vit_threshold=0.1, curr_class=None, prev_masks=None):
-    # SAM model
+    # Load the SAM model
     sam = sam_model_registry[model_type](checkpoint=models[model_type]).to(device)
-    predictor = SamPredictor(sam)
-    # print(f"{input_x = }")
+    predictor = SamPredictor(sam)  # Initialize the predictor
     predictor.set_image(input_x)  # Process the image to produce an image embedding
 
     transformed_boxes = None
 
-    # Points
+    # Process selected points
     if len(selected_points) != 0:
         points = torch.Tensor([p for p, _ in selected_points]).to(device).unsqueeze(1)
         labels = torch.Tensor([int(l) for _, l in selected_points]).to(device).unsqueeze(1)
@@ -118,7 +125,7 @@ def predictor_inference(device, model_type, input_x, input_text, selected_points
     else:
         transformed_points, labels = None, None
 
-    # Predict segmentation according to the points
+    # Predict segmentation based on points
     masks, scores, logits = predictor.predict_torch(
         point_coords=transformed_points,
         point_labels=labels,
@@ -128,8 +135,7 @@ def predictor_inference(device, model_type, input_x, input_text, selected_points
     masks = masks.cpu().detach().numpy()
     mask_all = np.ones((input_x.shape[0], input_x.shape[1], 3))
     
-    # print(f"{masks.shape = }")
-    # print(f"{mask_all.shape = }")
+    # Apply masks to the image
     for ann in masks:
         mask = ann[0]  # Extract the single mask
         if not curr_class:
@@ -139,7 +145,7 @@ def predictor_inference(device, model_type, input_x, input_text, selected_points
         for i in range(3):
             mask_all[mask == True, i] = color_mask[i]
     
-    img = input_x / 255 * 0.3 + mask_all * 0.7
+    img = input_x / 255 * 0.3 + mask_all * 0.7  # Blend the original image with the masks
     for prev, clr_class in prev_masks:
         for idk in prev:
             mask = idk[0]
@@ -148,22 +154,21 @@ def predictor_inference(device, model_type, input_x, input_text, selected_points
             for i in range(3):
                  mask_all[mask == True, i] = color_mask[i]
     
+    img = input_x / 255 * 0.3 + mask_all * 0.7  # Final blend
     
-    img = input_x / 255 * 0.3 + mask_all * 0.7
-    
-    
+    # Clean up
     del input_text
     gc.collect()
     torch.cuda.empty_cache()
-    return img, mask_all, input_x, masks
+    return img, mask_all, input_x, masks  # Return results
 
+# Function to run inference based on the input type and user selections
 def run_inference(device, model_type, points_per_side, pred_iou_thresh, stability_score_thresh, min_mask_region_area,
                   stability_score_offset, box_nms_thresh, crop_n_layers, crop_nms_thresh, input_x,
                   selected_points=[], prev_masks=[], curr_class="L_canine"):
-    # If input_x is int, the image is selected from examples
     input_text = ''
     owl_vit_threshold = 0.1
-    if isinstance(input_x, int):
+    if isinstance(input_x, int):  # If input_x is int, the image is selected from examples
         input_x = cv2.imread(image_examples[input_x][0])
         input_x = cv2.cvtColor(input_x, cv2.COLOR_BGR2RGB)
     if (input_text != '' and not isinstance(input_x, str)) or len(selected_points) != 0:  # User input text or points
